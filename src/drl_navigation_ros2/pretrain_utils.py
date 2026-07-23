@@ -56,7 +56,13 @@ class Pretraining:
                         next_action,
                     )
                     reward = self.reward_function(
-                        next_goal, next_collision, action, next_latest_scan
+                        next_goal,
+                        next_collision,
+                        action,
+                        next_latest_scan,
+                        next_cos,
+                        next_distance,
+                        distance,
                     )
                     self.replay_buffer.add(
                         state, action, reward, next_terminal, next_state

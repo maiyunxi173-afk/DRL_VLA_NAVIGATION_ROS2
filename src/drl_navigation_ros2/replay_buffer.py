@@ -1,5 +1,7 @@
 import random
+import pickle
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 
@@ -12,7 +14,7 @@ class ReplayBuffer(object):
         self.buffer_size = buffer_size
         self.count = 0
         self.buffer = deque()
-        random.seed(random_seed)
+        self.random = random.Random(random_seed)
 
     def add(self, s, a, r, t, s2):
         experience = (s, a, r, t, s2)
@@ -28,9 +30,9 @@ class ReplayBuffer(object):
 
     def sample_batch(self, batch_size):
         if self.count < batch_size:
-            batch = random.sample(self.buffer, self.count)
+            batch = self.random.sample(self.buffer, self.count)
         else:
-            batch = random.sample(self.buffer, batch_size)
+            batch = self.random.sample(self.buffer, batch_size)
 
         s_batch = np.array([_[0] for _ in batch])
         a_batch = np.array([_[1] for _ in batch])
@@ -52,3 +54,31 @@ class ReplayBuffer(object):
     def clear(self):
         self.buffer.clear()
         self.count = 0
+
+    def save(self, path):
+        """Persist experiences and sampling RNG for resumable training."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_suffix(path.suffix + ".tmp")
+        with temporary_path.open("wb") as file:
+            pickle.dump(
+                {
+                    "buffer_size": self.buffer_size,
+                    "buffer": self.buffer,
+                    "count": self.count,
+                    "random_state": self.random.getstate(),
+                },
+                file,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+        temporary_path.replace(path)
+
+    def load(self, path):
+        path = Path(path)
+        with path.open("rb") as file:
+            state = pickle.load(file)
+        self.buffer_size = state["buffer_size"]
+        self.buffer = state["buffer"]
+        self.count = state["count"]
+        self.random.setstate(state["random_state"])
+        return self

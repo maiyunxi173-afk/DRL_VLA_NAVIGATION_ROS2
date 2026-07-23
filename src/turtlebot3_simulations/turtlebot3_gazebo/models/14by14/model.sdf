@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="14by14">
+    <static>true</static>
+
+    <link name="west_wall">
+      <pose>-6.925 0 1.25 0 0 0</pose>
+      <collision name="collision">
+        <geometry><box><size>0.15 14 2.5</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.15 14 2.5</size></box></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
+      </visual>
+    </link>
+
+    <link name="east_wall">
+      <pose>6.925 0 1.25 0 0 0</pose>
+      <collision name="collision">
+        <geometry><box><size>0.15 14 2.5</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.15 14 2.5</size></box></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
+      </visual>
+    </link>
+
+    <link name="north_wall">
+      <pose>0 6.925 1.25 0 0 0</pose>
+      <collision name="collision">
+        <geometry><box><size>14 0.15 2.5</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>14 0.15 2.5</size></box></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
+      </visual>
+    </link>
+
+    <link name="south_wall">
+      <pose>0 -6.925 1.25 0 0 0</pose>
+      <collision name="collision">
+        <geometry><box><size>14 0.15 2.5</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>14 0.15 2.5</size></box></geometry>
+        <material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Grey</name></script></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

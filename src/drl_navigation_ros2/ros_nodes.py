@@ -17,26 +17,46 @@ class SensorSubscriber(Node):
     def __init__(self):
         super().__init__("sensor_subscriber")
         self.get_logger().set_level(SEVERITY)
-        self.subscriber_ = self.create_subscription(
+        self.scan_subscription = self.create_subscription(
             LaserScan, "scan", self.scan_listener_callback, 1
         )
-        self.subscriber_ = self.create_subscription(
+        self.odom_subscription = self.create_subscription(
             Odometry, "odom", self.odom_listener_callback, 1
         )
         self.latest_position = None
         self.latest_heading = None
+        self.latest_odom_stamp = None
         self.latest_scan = None
+        self.scan_sequence = 0
+        self.odom_sequence = 0
 
     def scan_listener_callback(self, msg):
         self.latest_scan = msg.ranges[:]
+        self.scan_sequence += 1
 
     def odom_listener_callback(self, msg):
         self.latest_position = msg.pose.pose.position
         self.latest_heading = msg.pose.pose.orientation
+        self.latest_odom_stamp = msg.header.stamp
+        self.odom_sequence += 1
 
     def get_latest_sensor(self):
-        # print(self.latest_scan, self.latest_position, self.latest_heading)
         return self.latest_scan, self.latest_position, self.latest_heading
+
+    def get_latest_odom_stamp(self):
+        return self.latest_odom_stamp
+
+    def get_sequences(self):
+        return self.scan_sequence, self.odom_sequence
+
+    def has_fresh_sensor(self, previous_scan_sequence, previous_odom_sequence):
+        return (
+            self.scan_sequence > previous_scan_sequence
+            and self.odom_sequence > previous_odom_sequence
+            and self.latest_scan is not None
+            and self.latest_position is not None
+            and self.latest_heading is not None
+        )
 
 
 class ScanSubscriber(Node):
@@ -89,15 +109,16 @@ class ResetWorldClient(Node):
             )
             raise RuntimeError(f"Service {service_name} not available.")
 
-    def reset_world(self):
+    def reset_world(self, timeout=5.0):
         self.get_logger().info("Calling /gazebo/reset_world service...")
         request = Empty.Request()
         future = self.reset_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
-        if future.result() is not None:
-            self.get_logger().info("World reset successfully.")
-        else:
-            self.get_logger().error(f"Failed to reset world: {future.exception()}")
+        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+        if not future.done():
+            raise TimeoutError("Timed out waiting for /reset_world")
+        if future.exception() is not None:
+            raise RuntimeError(f"/reset_world failed: {future.exception()}")
+        self.get_logger().info("World reset successfully.")
 
 
 class PhysicsClient(Node):
@@ -118,26 +139,22 @@ class PhysicsClient(Node):
             )
             raise RuntimeError(f"Service {service_name} not available.")
 
-    def pause_physics(self):
+    def _call(self, client, service_name, timeout=5.0):
+        request = Empty.Request()
+        future = client.call_async(request)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+        if not future.done():
+            raise TimeoutError(f"Timed out waiting for /{service_name}")
+        if future.exception() is not None:
+            raise RuntimeError(f"/{service_name} failed: {future.exception()}")
+
+    def pause_physics(self, timeout=5.0):
         self.get_logger().info("Calling /gazebo/pause_physics service...")
-        request = Empty.Request()
-        future = self.pause_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
-        if future.result() is not None:
-            self.get_logger().info("Physics paused successfully.")
-        else:
-            self.get_logger().error(f"Failed to pause physics: {future.exception()}")
+        self._call(self.pause_client, "pause_physics", timeout)
 
-    def unpause_physics(self):
+    def unpause_physics(self, timeout=5.0):
         self.get_logger().info("Calling /gazebo/unpause_physics service...")
-        request = Empty.Request()
-        future = self.unpause_client.call_async(request)
-
-        rclpy.spin_until_future_complete(self, future)
-        if future.result() is not None:
-            self.get_logger().info("Physics unpaused successfully.")
-        else:
-            self.get_logger().error(f"Failed to unpause physics: {future.exception()}")
+        self._call(self.unpause_client, "unpause_physics", timeout)
 
 
 class SetModelStateClient(Node):
@@ -149,10 +166,20 @@ class SetModelStateClient(Node):
             self.get_logger().info("Service not available, waiting again...")
         self.request = SetEntityState.Request()
 
-    def set_state(self, name, new_pose):
+    def set_state(self, name, new_pose, timeout=5.0):
         self.request.state.name = name
         self.request.state.pose = new_pose
-        self.future = self.client.call_async(self.request)
+        future = self.client.call_async(self.request)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+        if not future.done():
+            raise TimeoutError(f"Timed out moving Gazebo entity: {name}")
+        if future.exception() is not None:
+            raise RuntimeError(f"Failed moving Gazebo entity {name}: {future.exception()}")
+        response = future.result()
+        if response is None or not response.success:
+            status = "no response" if response is None else response.status_message
+            raise RuntimeError(f"Failed moving Gazebo entity {name}: {status}")
+        return response
 
 
 class CmdVelPublisher(Node):
@@ -176,12 +203,24 @@ class MarkerPublisher(Node):
     def __init__(self):
         super().__init__("marker_publisher")
         self.get_logger().set_level(SEVERITY)
-        self.publisher = self.create_publisher(Marker, "visualization_marker", 1)
+        marker_qos = QoSProfile(
+            depth=5,
+            durability=QoSDurabilityPolicy.VOLATILE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
+        self.publisher = self.create_publisher(
+            Marker, "visualization_marker", marker_qos
+        )
 
-    def publish(self, x, y):
+    def publish(self, x, y, stamp=None):
         marker = Marker()
         marker.header.frame_id = "odom"
-        marker.header.stamp = self.get_clock().now().to_msg()
+        # The target and robot pose are both expressed in odom. Reuse the
+        # corresponding Odometry timestamp so RViz never mixes wall and
+        # Gazebo simulation time. A zero stamp remains a safe fallback.
+        if stamp is not None:
+            marker.header.stamp = stamp
         marker.ns = "goal"
         marker.id = 0
         marker.type = Marker.CYLINDER

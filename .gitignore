@@ -99,7 +99,10 @@ celerybeat-schedule
 
 # Environments
 .env
+.env.*
 .venv
+.python_deps/
+/runs/
 env/
 venv/
 ENV/
@@ -132,6 +135,7 @@ cov.xml
 
 # Editor config files
 .vscode
+.idea/
 
 # DeepCode/Snyk
 .dccache
@@ -146,3 +150,20 @@ tests/reports
 .ruff_cache
 /log/
 /install/
+/build/
+
+# ROS/Gazebo runtime outputs
+*.bag
+*.db3
+*.mcap
+*.active
+rosbag2_*/
+
+# Training and demo artifacts generated during local experiments
+events.out.tfevents*
+replay_buffer.pkl
+artifacts/
+results/
+*.mp4
+*.avi
+*.mkv
