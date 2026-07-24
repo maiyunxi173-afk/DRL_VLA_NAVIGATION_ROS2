@@ -1,16 +1,16 @@
-# DRL Robot Navigation ROS 2
+# Vision-Language Guided Reinforcement Learning Navigation System
 
-Research code for mobile robot navigation in ROS 2 Humble and Gazebo Classic. The project trains and deploys a Soft Actor-Critic (SAC) local navigation policy for TurtleBot3 Waffle, and connects it to a vision-language-action (VLA) goal interface: the VLA layer decides where the robot should go, while the SAC controller decides how to move safely through lidar observations.
+Research code for vision-language-guided mobile robot navigation in ROS 2 Humble and Gazebo Classic. The project combines a vision-language model (VLM) planner with a Soft Actor-Critic (SAC) local controller for TurtleBot3 Waffle: the VLM reasons about where the robot should go, while SAC decides how to move safely using lidar observations.
 
 The released deterministic policy is stored in `src/drl_navigation_ros2/models/SAC_epoch6_best`.
 
 ## Motivation
 
-Language-conditioned robot navigation is difficult because high-level semantic instructions and low-level collision avoidance operate at different frequencies and levels of abstraction. A vision-language model can identify a target object or infer a navigation intent, but direct velocity control from that model is brittle in cluttered indoor simulation.
+Autonomous robots require the ability to understand high-level human instructions and execute safe navigation. This is difficult because semantic reasoning and low-level collision avoidance operate at different frequencies and levels of abstraction. A vision-language model can identify a target object or infer navigation intent, but direct velocity control from that model is brittle in cluttered indoor environments.
 
-This repository studies a two-layer alternative:
+This project proposes and studies a hierarchical architecture:
 
-- A low-frequency VLA layer interprets the scene and publishes candidate goals.
+- A low-frequency Qwen-VL planner interprets the scene and publishes candidate goals.
 - A high-frequency SAC policy consumes lidar, odometry, and the active goal to publish velocity commands.
 - A supervisor arbitrates goal sources and applies safety fallbacks for target loss, stale goals, and near-obstacle cases.
 
@@ -18,23 +18,31 @@ The result is a reproducible ROS 2 navigation stack for studying semantic goal g
 
 ## Method
 
-### System Overview
+### Architecture
 
 ```text
-Gazebo world
-  -> /scan + /odom
-  -> SAC state encoder
-  -> SAC actor
-  -> lidar safety layer
-  -> /cmd_vel
-
-VLA demos / manual goal / vision bridge
-  -> /vla_goal/source/*
-  -> vla_agent_supervisor
-  -> /vla_goal
+          Qwen-VL
+             |
+  Natural Language Command
+             |
+       Goal Reasoning
+             |
+       Navigation Target
+             |
+     Goal Supervisor
+             |
+          SAC Agent <----- LiDAR + Odometry
+             |
+      Safety Controller
+             |
+      Velocity Command
+             |
+        TurtleBot3
+             |
+          Gazebo
 ```
 
-Only `sac_vla_controller` should publish `/cmd_vel`. VLA components publish goals, not robot velocities.
+Qwen-VL and the VLA bridge publish navigation goals through `/vla_goal/source/*`. The supervisor selects and normalizes a goal on `/vla_goal`. Only `sac_vla_controller` publishes `/cmd_vel`; VLA components never directly command robot velocity.
 
 ### Reinforcement Learning Policy
 
@@ -81,7 +89,7 @@ src/turtlebot3_simulations/turtlebot3_gazebo/launch/vla_sac_stack.launch.py
 | `docs/PROJECT_LAYOUT.md` | Detailed file map |
 | `docs/EXPERIMENT_RESULTS.md` | Current metric log and evaluation protocol |
 
-## Results
+## Experimental Results
 
 The current released model is `SAC_epoch6_best`. Latest tracked metrics and the evaluation template are maintained in:
 
@@ -89,17 +97,15 @@ The current released model is `SAC_epoch6_best`. Latest tracked metrics and the 
 docs/EXPERIMENT_RESULTS.md
 ```
 
-Primary metrics:
+The table below establishes the planned comparison. Values are illustrative placeholders from the project plan, not verified benchmark claims; they will be replaced after all methods are evaluated with the same seeds, maps, and episode count.
 
-| Metric | Meaning |
-| --- | --- |
-| `eval/avg_reward` | Mean evaluation return |
-| `eval/avg_goal` | Goal success rate |
-| `eval/avg_col` | Collision rate |
-| `eval/timeout_rate` | Timeout rate |
-| `eval/avg_steps` | Mean steps per episode |
+| Method | Success Rate | Collisions | Mean Time |
+| --- | ---: | ---: | ---: |
+| DWA | 75%* | 8* | 45 s* |
+| SAC | 88%* | 3* | 32 s* |
+| VLA + SAC | 92%* | 1* | 30 s* |
 
-No TensorBoard event files or runtime result JSON files are committed in this repository. Re-run evaluation locally and record the final metrics in `docs/EXPERIMENT_RESULTS.md`.
+\* Placeholder value pending reproducible evaluation. No committed TensorBoard events or result files are currently available to substantiate these values. See [the experiment log](docs/EXPERIMENT_RESULTS.md) for the protocol, metric definitions, and verified-results table.
 
 ## Video
 
@@ -111,11 +117,7 @@ Recommended demo video contents:
 4. SAC controller driving TurtleBot3 to the target while avoiding obstacles.
 5. Terminal output for `/sac_navigation/status` and `/vla_navigation/result`.
 
-Add the final video link here after upload:
-
-```text
-Video: TBD
-```
+Demo video: **TBD**. The final link will show language-goal reasoning, Gazebo/RViz visualization, `/vla_goal` publication, and collision-aware TurtleBot3 execution.
 
 ## Installation
 
@@ -282,7 +284,7 @@ ros2 topic info /cmd_vel -v
 
 ## Citation
 
-If this repository supports academic work, cite the repository and the underlying SAC and TurtleBot3/ROS 2 components used by your experiment. A BibTeX entry can be added after publication.
+If this repository supports your academic work, cite it using [CITATION.bib](CITATION.bib). Please also cite the underlying SAC, TurtleBot3, ROS 2, and Gazebo components used by your experiment.
 
 ## Acknowledgements
 

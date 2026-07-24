@@ -22,6 +22,18 @@ No committed TensorBoard event files, result JSON files, or evaluation CSV files
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | TBD | `SAC_epoch6_best` | TBD | TBD | TBD | TBD | TBD | TBD | Latest released model; metrics pending local evaluation export |
 
+## Method Comparison
+
+This is the canonical comparison table for the project. Only values supported by saved evaluation outputs should be moved into the verified columns.
+
+| Method | Episodes | Success Rate | Collisions | Mean Time | Status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| DWA | TBD | TBD | TBD | TBD | Evaluation pending |
+| SAC | TBD | TBD | TBD | TBD | Evaluation pending |
+| VLA + SAC | TBD | TBD | TBD | TBD | Evaluation pending |
+
+For each completed benchmark, record the date, commit SHA, map set, random seeds, checkpoint, and raw-result artifact location in the notes. Use identical scenarios across methods.
+
 ## Evaluation Protocol
 
 1. Build and source the workspace.
