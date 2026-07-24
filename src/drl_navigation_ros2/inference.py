@@ -3,7 +3,8 @@
 The high-level planner (for example ``bpx_vla_navigation``) publishes an
 ``odom``-frame ``geometry_msgs/PointStamped`` on ``/vla_goal``.  This node
 combines that goal with ``/scan`` and ``/odom``, builds exactly the same
-25-dimensional state used during training, and publishes ``/cmd_vel``.
+25-dimensional state used during training, and publishes a configurable
+velocity topic.
 """
 
 import argparse
@@ -134,6 +135,8 @@ class SacVlaController(Node):
         search_observe_duration=0.0,
         sensor_timeout=1.0,
         goal_timeout=0.0,
+        cmd_vel_topic="/cmd_vel",
+        internal_safety=True,
     ):
         super().__init__("sac_vla_controller")
         self.policy = policy
@@ -151,6 +154,8 @@ class SacVlaController(Node):
         self.search_observe_duration = max(0.0, float(search_observe_duration))
         self.sensor_timeout = float(sensor_timeout)
         self.goal_timeout = float(goal_timeout)
+        self.cmd_vel_topic = str(cmd_vel_topic)
+        self.internal_safety = bool(internal_safety)
 
         self.latest_scan = None
         self.latest_scan_message = None
@@ -182,7 +187,7 @@ class SacVlaController(Node):
         self.create_subscription(
             Bool, "/vla_navigation/search", self.search_callback, 10
         )
-        self.cmd_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.cmd_publisher = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.status_publisher = self.create_publisher(
             String, "/sac_navigation/status", 10
         )
@@ -208,6 +213,10 @@ class SacVlaController(Node):
             "(linear and angular policy commands)"
         )
         self.get_logger().info(
+            f"Velocity output={self.cmd_vel_topic}; "
+            f"internal safety={'enabled' if self.internal_safety else 'disabled'}"
+        )
+        self.get_logger().info(
             "Waiting for /scan, /odom and an odom-frame /vla_goal ..."
         )
         search_mode = (
@@ -225,7 +234,7 @@ class SacVlaController(Node):
 
     def check_cmd_vel_publishers(self):
         """Report accidental legacy controllers that compete for velocity."""
-        endpoints = self.get_publishers_info_by_topic("/cmd_vel")
+        endpoints = self.get_publishers_info_by_topic(self.cmd_vel_topic)
         foreign = sorted(
             {
                 f"{endpoint.node_namespace.rstrip('/')}/{endpoint.node_name}"
@@ -235,7 +244,7 @@ class SacVlaController(Node):
         )
         if foreign:
             self.get_logger().error(
-                "Velocity conflict: /cmd_vel also has publisher(s): "
+                f"Velocity conflict: {self.cmd_vel_topic} also has publisher(s): "
                 + ", ".join(foreign)
                 + ". Stop legacy navigation/control nodes.",
                 throttle_duration_sec=10.0,
@@ -394,7 +403,10 @@ class SacVlaController(Node):
             self.publish_status("invalid_scan")
             return
         minimum_range = float(finite_scan.min())
-        if minimum_range < self.emergency_stop_distance:
+        if (
+            self.internal_safety
+            and minimum_range < self.emergency_stop_distance
+        ):
             self.get_logger().warning(
                 "Emergency stop: obstacle critically close",
                 throttle_duration_sec=2.0,
@@ -417,7 +429,7 @@ class SacVlaController(Node):
             self.publish_status("goal_reached")
             return
 
-        if minimum_range < self.hard_avoidance_distance:
+        if self.internal_safety and minimum_range < self.hard_avoidance_distance:
             self.run_hard_avoidance()
             return
 
@@ -481,7 +493,10 @@ class SacVlaController(Node):
             self.publish_status("invalid_scan")
             return
         minimum_range = float(finite.min())
-        if minimum_range < self.emergency_stop_distance:
+        if (
+            self.internal_safety
+            and minimum_range < self.emergency_stop_distance
+        ):
             self.publish_stop()
             self.publish_status("emergency_stop")
             return
@@ -515,7 +530,10 @@ class SacVlaController(Node):
             return
         angular_scale = (
             self.avoidance_angular_speed
-            if minimum_range < self.hard_avoidance_distance
+            if (
+                self.internal_safety
+                and minimum_range < self.hard_avoidance_distance
+            )
             else self.search_angular_speed
         )
         turn_sign = self.search_turn_sign
@@ -608,6 +626,13 @@ def parse_args(args=None):
         default=0.0,
         help="seconds before a goal expires; 0 keeps it until replaced",
     )
+    parser.add_argument("--cmd-vel-topic", default="/cmd_vel")
+    parser.add_argument(
+        "--internal-safety",
+        choices=["true", "false"],
+        default="true",
+        help="retain legacy emergency-stop and hard-avoidance logic",
+    )
     return parser.parse_args(args)
 
 
@@ -631,6 +656,8 @@ def main(args=None):
         search_observe_duration=config.search_observe_duration,
         sensor_timeout=config.sensor_timeout,
         goal_timeout=config.goal_timeout,
+        cmd_vel_topic=config.cmd_vel_topic,
+        internal_safety=config.internal_safety == "true",
     )
     try:
         rclpy.spin(node)

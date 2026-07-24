@@ -12,7 +12,8 @@ This project proposes and studies a hierarchical architecture:
 
 - A low-frequency Qwen-VL planner interprets the scene and publishes candidate goals.
 - A high-frequency SAC policy consumes lidar, odometry, and the active goal to publish velocity commands.
-- A supervisor arbitrates goal sources and applies safety fallbacks for target loss, stale goals, and near-obstacle cases.
+- An optional, policy-independent lidar safety shield projects unsafe actions
+  to stop, reduced-speed, or avoidance commands.
 
 The result is a reproducible ROS 2 navigation stack for studying semantic goal grounding and learned local control in Gazebo.
 
@@ -33,16 +34,36 @@ The result is a reproducible ROS 2 navigation stack for studying semantic goal g
              |
           SAC Agent <----- LiDAR + Odometry
              |
-      Safety Controller
+      /policy_cmd_vel
              |
-      Velocity Command
+       Safety Shield <----- LiDAR
+             |
+         /cmd_vel
              |
         TurtleBot3
              |
           Gazebo
 ```
 
-Qwen-VL and the VLA bridge publish navigation goals through `/vla_goal/source/*`. The supervisor selects and normalizes a goal on `/vla_goal`. Only `sac_vla_controller` publishes `/cmd_vel`; VLA components never directly command robot velocity.
+Qwen-VL and the VLA bridge publish navigation goals through
+`/vla_goal/source/*`. The supervisor selects and normalizes a goal on
+`/vla_goal`. In the shield configuration, `sac_vla_controller` publishes raw
+actions on `/policy_cmd_vel`, while the independent `safety_shield` node is the
+only publisher on `/cmd_vel`. VLA components never directly command velocity.
+
+### Policy Action Safety Shield
+
+Inspired by policy-action shielding, the ROS 2 adaptation remains independent
+of the SAC network and uses lidar geometry at control frequency. It applies:
+
+- emergency stop when any valid range is critically close;
+- zero-linear-speed turning toward the clearer side for a blocked front sector;
+- continuous forward-speed reduction inside the warning region;
+- pass-through when the policy action is safe.
+
+The shield publishes `/safety_shield/status` and
+`/safety_shield/intervention`, enabling intervention-rate and collision-rate
+analysis without changing the trained policy.
 
 ### Reinforcement Learning Policy
 
@@ -79,6 +100,8 @@ src/turtlebot3_simulations/turtlebot3_gazebo/launch/vla_sac_stack.launch.py
 | --- | --- |
 | `src/drl_navigation_ros2/train.py` | SAC training script |
 | `src/drl_navigation_ros2/inference.py` | SAC/VLA inference controller |
+| `src/drl_navigation_ros2/safety_shield.py` | Independent ROS 2 action safety shield |
+| `src/drl_navigation_ros2/safety_shield_core.py` | Testable lidar safety projection |
 | `src/drl_navigation_ros2/ros_python.py` | Gazebo environment, state construction, rewards |
 | `src/drl_navigation_ros2/SAC/` | SAC actor, critic, replay buffer, update logic |
 | `src/drl_navigation_ros2/models/SAC_epoch6_best/` | Released stable inference checkpoint |

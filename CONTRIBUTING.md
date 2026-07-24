@@ -32,7 +32,8 @@ Record verified aggregate results in `docs/EXPERIMENT_RESULTS.md`. Do not presen
 
 - Keep changes scoped and compatible with ROS 2 Humble unless a migration is proposed.
 - Add or update tests for behavior changes.
-- Preserve the rule that only the SAC navigation controller publishes `/cmd_vel`.
+- Preserve single ownership of `/cmd_vel`: SAC owns it when the shield is
+  disabled; `safety_shield` owns it when shield mode is enabled.
 - Never commit API keys, credentials, rosbags, model caches, replay buffers, or large runtime artifacts.
 - Use clear commit messages and explain user-visible changes in the pull request.
 

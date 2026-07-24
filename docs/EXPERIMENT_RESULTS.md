@@ -12,7 +12,8 @@ This document records the latest public metrics for the ROS 2 SAC navigation and
 | ROS distribution | ROS 2 Humble |
 | Local controller | Soft Actor-Critic |
 | Goal interface | `/vla_goal` as `geometry_msgs/PointStamped` in `odom` frame |
-| Velocity output | `/cmd_vel` from `sac_vla_controller` only |
+| Policy action | `/policy_cmd_vel` when the independent shield is enabled |
+| Velocity output | `/cmd_vel` from exactly one final controller |
 
 ## Latest Metrics
 
@@ -31,6 +32,39 @@ This is the canonical comparison table for the project. Only values supported by
 | DWA | TBD | TBD | TBD | TBD | Evaluation pending |
 | SAC | TBD | TBD | TBD | TBD | Evaluation pending |
 | VLA + SAC | TBD | TBD | TBD | TBD | Evaluation pending |
+| VLA + SAC + Safety Shield | TBD | TBD | TBD | TBD | Evaluation pending |
+
+## Safety Shield Ablation
+
+Use identical maps, target sequences, seeds, timeouts, policy checkpoint, and
+speed scale for both variants. Disable the legacy safety inside SAC so that the
+independent shield is the only changed variable.
+
+| Model | SAC internal safety | Independent shield | SAC output | Final output |
+| --- | --- | --- | --- | --- |
+| Model A: VLA + SAC | Disabled | Disabled | `/cmd_vel` | `/cmd_vel` |
+| Model B: VLA + SAC + Shield | Disabled | Enabled | `/policy_cmd_vel` | `/cmd_vel` |
+
+Model A command:
+
+```bash
+ros2 launch turtlebot3_gazebo vla_sac_stack.launch.py \
+  enable_safety_shield:=false internal_safety:=false
+```
+
+Model B command:
+
+```bash
+ros2 launch turtlebot3_gazebo vla_sac_stack.launch.py \
+  enable_safety_shield:=true internal_safety:=false
+```
+
+Record shield-specific outcomes alongside the navigation metrics:
+
+| Date | Model | Episodes | Success Rate | Collision Rate | Mean Time | Interventions/Episode | Emergency Stops/Episode |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| TBD | Model A | TBD | TBD | TBD | TBD | N/A | N/A |
+| TBD | Model B | TBD | TBD | TBD | TBD | TBD | TBD |
 
 For each completed benchmark, record the date, commit SHA, map set, random seeds, checkpoint, and raw-result artifact location in the notes. Use identical scenarios across methods.
 

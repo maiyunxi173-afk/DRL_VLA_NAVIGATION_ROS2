@@ -43,6 +43,8 @@ def generate_launch_description():
     vlm_model = LaunchConfiguration("vlm_model")
     enable_color_fallback = LaunchConfiguration("enable_color_fallback")
     policy_speed_scale = LaunchConfiguration("policy_speed_scale")
+    enable_safety_shield = LaunchConfiguration("enable_safety_shield")
+    internal_safety = LaunchConfiguration("internal_safety")
     search_angular_speed = LaunchConfiguration("search_angular_speed")
     search_rotate_duration = LaunchConfiguration("search_rotate_duration")
     search_observe_duration = LaunchConfiguration("search_observe_duration")
@@ -85,6 +87,16 @@ def generate_launch_description():
             PathJoinSubstitution([source_directory, "inference.py"]),
             "--policy-speed-scale",
             policy_speed_scale,
+            "--cmd-vel-topic",
+            PythonExpression(
+                [
+                    "'/policy_cmd_vel' if '",
+                    enable_safety_shield,
+                    "'.lower() in ('true', '1', 'yes') else '/cmd_vel'",
+                ]
+            ),
+            "--internal-safety",
+            internal_safety,
             "--search-angular-speed",
             search_angular_speed,
             "--search-rotate-duration",
@@ -93,6 +105,15 @@ def generate_launch_description():
             search_observe_duration,
         ],
         additional_env={"PYTHONPATH": python_path},
+        output="screen",
+    )
+    safety_shield = ExecuteProcess(
+        cmd=[
+            "python3",
+            PathJoinSubstitution([source_directory, "safety_shield.py"]),
+        ],
+        additional_env={"PYTHONPATH": python_path},
+        condition=IfCondition(enable_safety_shield),
         output="screen",
     )
     supervisor = ExecuteProcess(
@@ -278,6 +299,21 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "enable_safety_shield",
+                default_value="false",
+                description=(
+                    "Route SAC actions through the independent lidar safety shield"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "internal_safety",
+                default_value="true",
+                description=(
+                    "Enable legacy safety inside SAC; set false for shield ablations"
+                ),
+                choices=["true", "false"],
+            ),
+            DeclareLaunchArgument(
                 "search_angular_speed",
                 default_value="0.35",
                 description="Angular speed during each bounded search turn",
@@ -324,6 +360,7 @@ def generate_launch_description():
             ),
             gazebo_launch,
             inference,
+            safety_shield,
             supervisor,
             random_obstacles,
             random_target,
