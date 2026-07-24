@@ -1,63 +1,131 @@
 # DRL Robot Navigation ROS 2
 
-ROS 2 Humble + Gazebo Classic + PyTorch 的移动机器人导航项目。项目使用 SAC 训练 TurtleBot3 Waffle 的局部导航策略，并提供 VLA 大模型目标理解接口：大模型负责“去哪里”，SAC 负责“怎么避障开过去”。
+Research code for mobile robot navigation in ROS 2 Humble and Gazebo Classic. The project trains and deploys a Soft Actor-Critic (SAC) local navigation policy for TurtleBot3 Waffle, and connects it to a vision-language-action (VLA) goal interface: the VLA layer decides where the robot should go, while the SAC controller decides how to move safely through lidar observations.
 
-当前稳定推理模型为 `src/drl_navigation_ros2/models/SAC_epoch6_best`。
+The released deterministic policy is stored in `src/drl_navigation_ros2/models/SAC_epoch6_best`.
 
-## Features
+## Motivation
 
-- SAC 局部导航：输入 `/scan`、`/odom` 和目标点，输出 `/cmd_vel`
-- Gazebo 随机障碍物、随机 red box 语义目标
-- RViz 固定配置：TF、LaserScan、Odometry、Marker
-- TensorBoard 训练指标
-- VLA 双层架构：低频大脑生成/仲裁目标，高频小脑执行 SAC 控制
-- 雷达安全层：紧急停车、硬避障、目标丢失后的有界搜索
+Language-conditioned robot navigation is difficult because high-level semantic instructions and low-level collision avoidance operate at different frequencies and levels of abstraction. A vision-language model can identify a target object or infer a navigation intent, but direct velocity control from that model is brittle in cluttered indoor simulation.
 
-## Architecture
+This repository studies a two-layer alternative:
+
+- A low-frequency VLA layer interprets the scene and publishes candidate goals.
+- A high-frequency SAC policy consumes lidar, odometry, and the active goal to publish velocity commands.
+- A supervisor arbitrates goal sources and applies safety fallbacks for target loss, stale goals, and near-obstacle cases.
+
+The result is a reproducible ROS 2 navigation stack for studying semantic goal grounding and learned local control in Gazebo.
+
+## Method
+
+### System Overview
 
 ```text
-Training:
-Gazebo -> /scan + /odom -> ROS_env reward/state -> SAC -> /cmd_vel
+Gazebo world
+  -> /scan + /odom
+  -> SAC state encoder
+  -> SAC actor
+  -> lidar safety layer
+  -> /cmd_vel
 
-VLA inference:
-Demo4/Demo5/Demo6 or manual goal
-        -> /vla_goal/source/*
-        -> vla_agent_supervisor
-        -> /vla_goal
-        -> SAC inference + lidar safety
-        -> /cmd_vel
+VLA demos / manual goal / vision bridge
+  -> /vla_goal/source/*
+  -> vla_agent_supervisor
+  -> /vla_goal
 ```
 
-系统原则：只有 `sac_vla_controller` 发布 `/cmd_vel`。VLA 节点只发布目标，不直接控制速度。
+Only `sac_vla_controller` should publish `/cmd_vel`. VLA components publish goals, not robot velocities.
 
-## Main Files
+### Reinforcement Learning Policy
 
-Detailed workspace and file mapping: [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md).
+The local navigation policy is trained with SAC using:
 
-| Path | Function |
+- LaserScan observations from TurtleBot3.
+- Odometry-derived relative target features.
+- Previous action context.
+- Reward terms for goal progress, goal completion, collision, timeout, and inefficient motion.
+
+Training entry point: `src/drl_navigation_ros2/train.py`.
+
+Deterministic inference entry point: `src/drl_navigation_ros2/inference.py`.
+
+### VLA Goal Grounding
+
+The VLA stack is integrated under `src/vla_bridge/vla_bridge`. Demo nodes can publish semantic observations, detection results, or target poses. These candidate goals are normalized through source topics and then selected by `vla_agent_supervisor.py`.
+
+Goal priority:
+
+```text
+manual > demo6 target pose > vision detection fallback
+```
+
+The full launch file is:
+
+```text
+src/turtlebot3_simulations/turtlebot3_gazebo/launch/vla_sac_stack.launch.py
+```
+
+### Repository Layout
+
+| Path | Purpose |
 | --- | --- |
-| `src/drl_navigation_ros2/train.py` | SAC 训练入口 |
-| `src/drl_navigation_ros2/inference.py` | SAC 确定性推理控制器 |
-| `src/drl_navigation_ros2/ros_python.py` | Gazebo 环境、reward、目标与碰撞判断 |
-| `src/drl_navigation_ros2/ros_nodes.py` | ROS topic/service 封装 |
-| `src/drl_navigation_ros2/SAC/` | SAC actor/critic/algorithm |
-| `src/drl_navigation_ros2/models/SAC_epoch6_best/` | 稳定推理模型 |
-| `src/drl_navigation_ros2/random_obstacle_manager.py` | 随机障碍物 |
-| `src/drl_navigation_ros2/random_red_box_manager.py` | 随机 red box 语义目标 |
-| `src/drl_navigation_ros2/vla_agent_supervisor.py` | VLA 目标仲裁与 fallback |
-| `src/drl_navigation_ros2/vla_target_bridge.py` | Demo6 目标转 `/vla_goal` |
-| `src/drl_navigation_ros2/vla_detection_goal_bridge.py` | Demo5 bbox 转局部目标 |
-| `src/vla_bridge/vla_bridge/` | 集成后的 Demo4/5/6 VLA 脚本 |
-| `src/turtlebot3_simulations/turtlebot3_gazebo/launch/vla_sac_stack.launch.py` | VLA + SAC 一键启动 |
+| `src/drl_navigation_ros2/train.py` | SAC training script |
+| `src/drl_navigation_ros2/inference.py` | SAC/VLA inference controller |
+| `src/drl_navigation_ros2/ros_python.py` | Gazebo environment, state construction, rewards |
+| `src/drl_navigation_ros2/SAC/` | SAC actor, critic, replay buffer, update logic |
+| `src/drl_navigation_ros2/models/SAC_epoch6_best/` | Released stable inference checkpoint |
+| `src/drl_navigation_ros2/vla_agent_supervisor.py` | Goal arbitration and fallback behavior |
+| `src/drl_navigation_ros2/random_obstacle_manager.py` | Randomized obstacle spawning |
+| `src/drl_navigation_ros2/random_red_box_manager.py` | Random semantic target spawning |
+| `src/vla_bridge/vla_bridge/` | Demo4/Demo5/Demo6 VLA bridge nodes |
+| `docs/PROJECT_LAYOUT.md` | Detailed file map |
+| `docs/EXPERIMENT_RESULTS.md` | Current metric log and evaluation protocol |
 
-## Requirements
+## Results
+
+The current released model is `SAC_epoch6_best`. Latest tracked metrics and the evaluation template are maintained in:
+
+```text
+docs/EXPERIMENT_RESULTS.md
+```
+
+Primary metrics:
+
+| Metric | Meaning |
+| --- | --- |
+| `eval/avg_reward` | Mean evaluation return |
+| `eval/avg_goal` | Goal success rate |
+| `eval/avg_col` | Collision rate |
+| `eval/timeout_rate` | Timeout rate |
+| `eval/avg_steps` | Mean steps per episode |
+
+No TensorBoard event files or runtime result JSON files are committed in this repository. Re-run evaluation locally and record the final metrics in `docs/EXPERIMENT_RESULTS.md`.
+
+## Video
+
+Recommended demo video contents:
+
+1. Gazebo world reset with randomized obstacles and target object.
+2. RViz view showing TF, LaserScan, Odometry, and active goal marker.
+3. VLA goal publication on `/vla_goal`.
+4. SAC controller driving TurtleBot3 to the target while avoiding obstacles.
+5. Terminal output for `/sac_navigation/status` and `/vla_navigation/result`.
+
+Add the final video link here after upload:
+
+```text
+Video: TBD
+```
+
+## Installation
+
+Tested target environment:
 
 - Ubuntu 22.04
 - ROS 2 Humble
 - Gazebo Classic 11
 - Python 3.10
 - PyTorch
-- TurtleBot3 Gazebo dependencies
 
 Install system dependencies:
 
@@ -69,29 +137,27 @@ sudo apt install -y \
   ros-humble-gazebo-ros-pkgs
 ```
 
-Install Python dependencies into the project-local `.python_deps` directory:
+Install Python dependencies into a project-local directory:
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
-
 python3 -m pip install --target .python_deps \
   numpy pyyaml tqdm tensorboard squaternion torch dashscope opencv-python
 ```
 
-Install ROS dependencies and build:
+Build the ROS 2 workspace:
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
-
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src --rosdistro humble -y
 colcon build --symlink-install --allow-overriding turtlebot3_description
 source install/setup.bash
 ```
 
-## Train SAC
+## Training
 
-Terminal 1, start Gazebo:
+Terminal 1:
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
@@ -106,7 +172,7 @@ export GAZEBO_MODEL_PATH="$PWD/src/turtlebot3_simulations/turtlebot3_gazebo/mode
 ros2 launch turtlebot3_gazebo ros2_drl.launch.py
 ```
 
-Terminal 2, start clean training:
+Terminal 2:
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
@@ -122,22 +188,13 @@ mkdir -p src/drl_navigation_ros2/models/SAC
 python3 src/drl_navigation_ros2/train.py
 ```
 
-Continue from checkpoint:
+Resume from a checkpoint:
 
 ```bash
 python3 src/drl_navigation_ros2/train.py --resume
 ```
 
-Clean old training logs and runtime checkpoints:
-
-```bash
-rm -rf runs/*
-rm -rf src/drl_navigation_ros2/models/SAC
-```
-
-Do not delete `src/drl_navigation_ros2/models/SAC_epoch6_best` unless you intentionally want to remove the released demo model.
-
-## TensorBoard
+TensorBoard:
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
@@ -146,36 +203,9 @@ export PATH="$PWD/.python_deps/bin:${PATH:-}"
 tensorboard --logdir runs --host 0.0.0.0 --port 6006
 ```
 
-Open:
+## Inference
 
-```text
-http://127.0.0.1:6006
-```
-
-Important metrics:
-
-| Metric | Meaning |
-| --- | --- |
-| `eval/avg_reward` | Higher is better |
-| `eval/avg_goal` | Goal success rate |
-| `eval/avg_col` | Collision rate |
-| `eval/timeout_rate` | Timeout rate |
-| `eval/avg_steps` | Average episode steps |
-
-## RViz
-
-```bash
-cd ~/DRL-Robot-Navigation-ROS2
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-export ROS_DOMAIN_ID=1
-
-rviz2 -d "$PWD/src/turtlebot3_simulations/turtlebot3_gazebo/rviz/tb3_gazebo.rviz"
-```
-
-## SAC Inference Only
-
-Start Gazebo first, then run:
+Start Gazebo, then run deterministic SAC inference:
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
@@ -196,22 +226,14 @@ Publish a manual odom-frame goal:
 python3 src/drl_navigation_ros2/publish_vla_goal.py 1.0 0.0 --topic /vla_goal
 ```
 
-Check status:
+Check runtime topics:
 
 ```bash
 ros2 topic echo /sac_navigation/status
 ros2 topic echo /cmd_vel --once
 ```
 
-## VLA Full Stack
-
-The VLA Demo4/5/6 scripts are integrated in:
-
-```text
-src/vla_bridge/vla_bridge
-```
-
-Launch Demo4/5/6 + random environment + SAC:
+## Full VLA + SAC Stack
 
 ```bash
 cd ~/DRL-Robot-Navigation-ROS2
@@ -258,50 +280,20 @@ ros2 topic echo /vla_navigation/result --qos-durability transient_local
 ros2 topic info /cmd_vel -v
 ```
 
-`/cmd_vel` should have only one publisher: `/sac_vla_controller`.
+## Citation
 
-## GitHub Notes
+If this repository supports academic work, cite the repository and the underlying SAC and TurtleBot3/ROS 2 components used by your experiment. A BibTeX entry can be added after publication.
 
-Upload checklist and repository structure: [`docs/GITHUB_UPLOAD.md`](docs/GITHUB_UPLOAD.md).
+## Acknowledgements
 
-Keep:
+This project builds on ROS 2, Gazebo Classic, TurtleBot3 simulation assets, SAC implementations, and earlier DRL navigation examples.
 
-```text
-README.md
-LICENSE
-pyproject.toml
-poetry.lock
-Makefile
-tests/
-docs/
-src/
-```
+Related references:
 
-Do not commit local runtime outputs:
-
-```text
-build/
-install/
-log/
-.venv/
-.python_deps/
-runs/
-artifacts/
-results/
-*.bag
-*.db3
-events.out.tfevents*
-replay_buffer.pkl
-```
-
-Never commit real API keys. Use environment variables such as `DASHSCOPE_API_KEY`.
-
-## Sources
-
-- ROS 2 adaptation: <https://github.com/tomasvr/turtlebot3_drlnav>
-- TD3 reference: <https://github.com/reiniscimurs/DRL-robot-navigation>
-- SAC reference: <https://github.com/denisyarats/pytorch_sac>
+- <https://github.com/tomasvr/turtlebot3_drlnav>
+- <https://github.com/reiniscimurs/DRL-robot-navigation>
+- <https://github.com/denisyarats/pytorch_sac>
 
 ## License
 
-See `LICENSE`.
+This repository is released under the MIT License. See `LICENSE` for details.
