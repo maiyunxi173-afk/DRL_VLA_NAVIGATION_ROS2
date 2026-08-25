@@ -1,21 +1,91 @@
 # Vision-Language Guided Reinforcement Learning Navigation System
 
-Research code for vision-language-guided mobile robot navigation in ROS 2 Humble and Gazebo Classic. The project combines a vision-language model (VLM) planner with a Soft Actor-Critic (SAC) local controller for TurtleBot3 Waffle: the VLM reasons about where the robot should go, while SAC decides how to move safely using lidar observations.
+ROS 2 + Gazebo research code for vision-language-guided mobile robot navigation. The project combines a Qwen-VL high-level goal planner, a Soft Actor-Critic (SAC) local controller, and an optional LiDAR-based safety shield for TurtleBot3 Waffle navigation in cluttered simulated environments.
 
 The released deterministic policy is stored in `src/drl_navigation_ros2/models/SAC_epoch6_best`.
 
+## Project Snapshot
+
+| Component | Implementation |
+| --- | --- |
+| Robot platform | TurtleBot3 Waffle |
+| Simulator | Gazebo Classic 11 |
+| Middleware | ROS 2 Humble |
+| Local policy | Soft Actor-Critic |
+| Semantic planner | Qwen-VL through the VLA bridge |
+| Policy observations | LaserScan, Odometry, relative target, previous action |
+| Final command topic | `/cmd_vel` |
+| Shielded policy topic | `/policy_cmd_vel` |
+| Goal interface | `/vla_goal` as `geometry_msgs/PointStamped` in the `odom` frame |
+
+## Main Demo
+
+The trained SAC policy runs deterministic inference in Gazebo while using LiDAR observations for local obstacle avoidance and a target goal for navigation.
+
+<p align="center">
+  <img src="docs/assets/04_trained_policy_navigation.gif" width="88%" alt="Trained SAC policy navigation in Gazebo and RViz">
+</p>
+
+## What To Observe
+
+This repository is organized for academic project review. When evaluating the demo and code, focus on the following observable behaviors:
+
+| Observation | Where to verify |
+| --- | --- |
+| The robot is trained and tested inside the same ROS 2 + Gazebo workflow | `src/drl_navigation_ros2/train.py`, `src/drl_navigation_ros2/ros_python.py`, training GIF |
+| SAC receives local geometric state rather than raw video | LaserScan, Odometry, relative goal, previous-action state construction |
+| VLA reasoning is separated from low-level control | `src/vla_bridge/vla_bridge/`, `/vla_goal/source/*`, `vla_agent_supervisor.py` |
+| The safety shield is policy-independent | `safety_shield.py`, `safety_shield_core.py`, `/policy_cmd_vel` to `/cmd_vel` projection |
+| Training improves navigation behavior | untrained-policy GIF versus trained-policy GIF |
+| Results are presented conservatively | `docs/EXPERIMENT_RESULTS.md` records pending metrics separately from visual demos |
+
+## Demo Sequence
+
+The four GIFs below form the project demonstration chain: environment setup, untrained baseline behavior, SAC training interaction, and trained policy inference.
+
+### 1. Simulation Environment
+
+Gazebo Classic environment with TurtleBot3 Waffle, randomized obstacles, goal locations, LiDAR perception, and multiple observation views.
+
+<p align="center">
+  <img src="docs/assets/01_simulation_environment.gif" width="85%" alt="Gazebo simulation environment for TurtleBot3 navigation">
+</p>
+
+### 2. Before Training - Untrained Policy Behavior
+
+Before SAC training, the robot exhibits unstable exploration, repeated local turns, inefficient trajectories, and weak goal-directed behavior.
+
+<p align="center">
+  <img src="docs/assets/02_untrained_policy.gif" width="85%" alt="Untrained SAC policy behavior before learning">
+</p>
+
+### 3. SAC Training Process
+
+During training, the SAC agent continuously interacts with the Gazebo environment, collects observations, samples actions, and updates the navigation policy across episodes.
+
+<p align="center">
+  <img src="docs/assets/03_sac_training.gif" width="85%" alt="SAC training process in ROS 2 and Gazebo">
+</p>
+
+### 4. After Training - Learned Navigation Policy
+
+After training, the deterministic policy demonstrates more goal-directed navigation while reacting to obstacles through local LiDAR-based observations.
+
+<p align="center">
+  <img src="docs/assets/04_trained_policy_navigation.gif" width="85%" alt="Trained SAC navigation policy after learning">
+</p>
+
 ## Motivation
 
-Autonomous robots require the ability to understand high-level human instructions and execute safe navigation. This is difficult because semantic reasoning and low-level collision avoidance operate at different frequencies and levels of abstraction. A vision-language model can identify a target object or infer navigation intent, but direct velocity control from that model is brittle in cluttered indoor environments.
+Autonomous robots require the ability to understand high-level human instructions and execute safe low-level navigation. This is difficult because semantic reasoning and collision-aware control operate at different frequencies and levels of abstraction. A vision-language model can identify a target object or infer navigation intent, but direct velocity control from the model is brittle in cluttered indoor environments.
 
-This project proposes and studies a hierarchical architecture:
+This project studies a hierarchical architecture:
 
-- A low-frequency Qwen-VL planner interprets the scene and publishes candidate goals.
-- A high-frequency SAC policy consumes lidar, odometry, and the active goal to publish velocity commands.
-- An optional, policy-independent lidar safety shield projects unsafe actions
-  to stop, reduced-speed, or avoidance commands.
+- A low-frequency Qwen-VL planner interprets scene/task information and publishes candidate goals.
+- A high-frequency SAC policy consumes LiDAR, odometry, and the active goal to publish velocity commands.
+- An optional, policy-independent LiDAR safety shield projects unsafe actions to stop, reduced-speed, or avoidance commands.
 
-The result is a reproducible ROS 2 navigation stack for studying semantic goal grounding and learned local control in Gazebo.
+The result is a reproducible ROS 2 navigation stack for studying semantic goal grounding, reinforcement-learning local control, and safety intervention in Gazebo.
 
 ## Method
 
@@ -45,25 +115,7 @@ The result is a reproducible ROS 2 navigation stack for studying semantic goal g
           Gazebo
 ```
 
-Qwen-VL and the VLA bridge publish navigation goals through
-`/vla_goal/source/*`. The supervisor selects and normalizes a goal on
-`/vla_goal`. In the shield configuration, `sac_vla_controller` publishes raw
-actions on `/policy_cmd_vel`, while the independent `safety_shield` node is the
-only publisher on `/cmd_vel`. VLA components never directly command velocity.
-
-### Policy Action Safety Shield
-
-Inspired by policy-action shielding, the ROS 2 adaptation remains independent
-of the SAC network and uses lidar geometry at control frequency. It applies:
-
-- emergency stop when any valid range is critically close;
-- zero-linear-speed turning toward the clearer side for a blocked front sector;
-- continuous forward-speed reduction inside the warning region;
-- pass-through when the policy action is safe.
-
-The shield publishes `/safety_shield/status` and
-`/safety_shield/intervention`, enabling intervention-rate and collision-rate
-analysis without changing the trained policy.
+Qwen-VL and the VLA bridge publish navigation goals through `/vla_goal/source/*`. The supervisor selects and normalizes a goal on `/vla_goal`. In the shield configuration, `sac_vla_controller` publishes raw policy actions on `/policy_cmd_vel`, while the independent `safety_shield` node is the only publisher on `/cmd_vel`. VLA components never directly command velocity.
 
 ### Reinforcement Learning Policy
 
@@ -77,6 +129,17 @@ The local navigation policy is trained with SAC using:
 Training entry point: `src/drl_navigation_ros2/train.py`.
 
 Deterministic inference entry point: `src/drl_navigation_ros2/inference.py`.
+
+### Policy Action Safety Shield
+
+Inspired by policy-action shielding, the ROS 2 adaptation remains independent of the SAC network and uses LiDAR geometry at control frequency. It applies:
+
+- emergency stop when any valid range is critically close;
+- zero-linear-speed turning toward the clearer side for a blocked front sector;
+- continuous forward-speed reduction inside the warning region;
+- pass-through when the policy action is safe.
+
+The shield publishes `/safety_shield/status` and `/safety_shield/intervention`, enabling intervention-rate and collision-rate analysis without changing the trained policy.
 
 ### VLA Goal Grounding
 
@@ -94,14 +157,14 @@ The full launch file is:
 src/turtlebot3_simulations/turtlebot3_gazebo/launch/vla_sac_stack.launch.py
 ```
 
-### Repository Layout
+## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
 | `src/drl_navigation_ros2/train.py` | SAC training script |
 | `src/drl_navigation_ros2/inference.py` | SAC/VLA inference controller |
 | `src/drl_navigation_ros2/safety_shield.py` | Independent ROS 2 action safety shield |
-| `src/drl_navigation_ros2/safety_shield_core.py` | Testable lidar safety projection |
+| `src/drl_navigation_ros2/safety_shield_core.py` | Testable LiDAR safety projection |
 | `src/drl_navigation_ros2/ros_python.py` | Gazebo environment, state construction, rewards |
 | `src/drl_navigation_ros2/SAC/` | SAC actor, critic, replay buffer, update logic |
 | `src/drl_navigation_ros2/models/SAC_epoch6_best/` | Released stable inference checkpoint |
@@ -109,6 +172,7 @@ src/turtlebot3_simulations/turtlebot3_gazebo/launch/vla_sac_stack.launch.py
 | `src/drl_navigation_ros2/random_obstacle_manager.py` | Randomized obstacle spawning |
 | `src/drl_navigation_ros2/random_red_box_manager.py` | Random semantic target spawning |
 | `src/vla_bridge/vla_bridge/` | Demo4/Demo5/Demo6 VLA bridge nodes |
+| `docs/assets/` | README GIF demonstrations |
 | `docs/PROJECT_LAYOUT.md` | Detailed file map |
 | `docs/EXPERIMENT_RESULTS.md` | Current metric log and evaluation protocol |
 
@@ -120,27 +184,16 @@ The current released model is `SAC_epoch6_best`. Latest tracked metrics and the 
 docs/EXPERIMENT_RESULTS.md
 ```
 
-The table below establishes the planned comparison. Values are illustrative placeholders from the project plan, not verified benchmark claims; they will be replaced after all methods are evaluated with the same seeds, maps, and episode count.
+The table below defines the planned comparison. Values should be filled only after all methods are evaluated with the same seeds, maps, checkpoint policy, and episode count.
 
-| Method | Success Rate | Collisions | Mean Time |
-| --- | ---: | ---: | ---: |
-| DWA | 75%* | 8* | 45 s* |
-| SAC | 88%* | 3* | 32 s* |
-| VLA + SAC | 92%* | 1* | 30 s* |
+| Method | Episodes | Success Rate | Collisions | Mean Time | Status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| DWA | TBD | TBD | TBD | TBD | Evaluation pending |
+| SAC | TBD | TBD | TBD | TBD | Evaluation pending |
+| VLA + SAC | TBD | TBD | TBD | TBD | Evaluation pending |
+| VLA + SAC + Safety Shield | TBD | TBD | TBD | TBD | Evaluation pending |
 
-\* Placeholder value pending reproducible evaluation. No committed TensorBoard events or result files are currently available to substantiate these values. See [the experiment log](docs/EXPERIMENT_RESULTS.md) for the protocol, metric definitions, and verified-results table.
-
-## Video
-
-Recommended demo video contents:
-
-1. Gazebo world reset with randomized obstacles and target object.
-2. RViz view showing TF, LaserScan, Odometry, and active goal marker.
-3. VLA goal publication on `/vla_goal`.
-4. SAC controller driving TurtleBot3 to the target while avoiding obstacles.
-5. Terminal output for `/sac_navigation/status` and `/vla_navigation/result`.
-
-Demo video: **TBD**. The final link will show language-goal reasoning, Gazebo/RViz visualization, `/vla_goal` publication, and collision-aware TurtleBot3 execution.
+See [the experiment log](docs/EXPERIMENT_RESULTS.md) for metric definitions, safety-shield ablation design, and the verified-results table.
 
 ## Installation
 
