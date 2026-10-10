@@ -165,5 +165,6 @@ replay_buffer.pkl
 artifacts/
 results/
 *.mp4
+!docs/media/drl_simulation_sequence.mp4
 *.avi
 *.mkv

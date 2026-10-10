@@ -4,6 +4,14 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
+
+
+pytestmark = pytest.mark.ros
+pytest.importorskip(
+    "rclpy",
+    reason="ROS-dependent tests require a sourced ROS 2 environment",
+)
 
 
 SOURCE_DIRECTORY = Path(__file__).parents[1] / "src" / "drl_navigation_ros2"
